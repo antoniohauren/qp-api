@@ -39,6 +39,7 @@ return [
         'url' => env('QUERO_PASSAGEM_URL', 'https://queropassagem.qpdevs.com'),
         'username' => env('QUERO_PASSAGEM_USERNAME'),
         'password' => env('QUERO_PASSAGEM_PASSWORD'),
+        'affiliate_code' => env('QUERO_PASSAGEM_AFFILIATE_CODE', 'DDE'),
     ],
 
 ];
