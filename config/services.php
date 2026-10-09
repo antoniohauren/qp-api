@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'quero_passagem' => [
+        'url' => env('QUERO_PASSAGEM_URL', 'https://queropassagem.qpdevs.com'),
+        'username' => env('QUERO_PASSAGEM_USERNAME'),
+        'password' => env('QUERO_PASSAGEM_PASSWORD'),
+    ],
+
 ];
