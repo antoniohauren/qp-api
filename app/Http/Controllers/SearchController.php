@@ -62,6 +62,18 @@ class SearchController extends Controller
                 config('services.quero_passagem.affiliate_code'),
             ));
 
-        return response()->json($response->json(), $response->status());
+        $trips = $response->json();
+
+        if ($response->successful()) {
+            usort($trips, fn (array $firstTrip, array $secondTrip): int => [
+                $firstTrip['departure']['date'],
+                $firstTrip['departure']['time'],
+            ] <=> [
+                $secondTrip['departure']['date'],
+                $secondTrip['departure']['time'],
+            ]);
+        }
+
+        return response()->json($trips, $response->status());
     }
 }

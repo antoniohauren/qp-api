@@ -19,7 +19,20 @@ beforeEach(function () {
 });
 
 test('it searches trips between two available stops', function () {
-    $trips = [[['id' => 'trip-1']]];
+    $trips = [
+        [
+            'id' => 'trip-next-day',
+            'departure' => ['date' => '2026-09-16', 'time' => '01:00:00'],
+        ],
+        [
+            'id' => 'trip-later',
+            'departure' => ['date' => '2026-09-15', 'time' => '18:00:00'],
+        ],
+        [
+            'id' => 'trip-earlier',
+            'departure' => ['date' => '2026-09-15', 'time' => '08:00:00'],
+        ],
+    ];
 
     Http::fake([
         'https://queropassagem.example/ws_v4/stops/CIT_1' => Http::response([
@@ -39,7 +52,11 @@ test('it searches trips between two available stops', function () {
 
     getJson('/api/search/CIT_1/CIT_2/2026-09-15')
         ->assertOk()
-        ->assertExactJson($trips);
+        ->assertExactJson([
+            $trips[2],
+            $trips[1],
+            $trips[0],
+        ]);
 
     Http::assertSent(fn (Request $request): bool => $request->url() === 'https://queropassagem.example/ws_v4/new/search/CIT_1/CIT_2/2026-09-15/DDE'
         && $request->hasHeader('Accept', 'application/json')
