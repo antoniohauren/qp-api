@@ -56,10 +56,10 @@ class StopController extends Controller
     private function isAvailable(array $stop): bool
     {
         $allowedStateCodes = ['SP', 'PR'];
-        $state = $stop['state'] ?? str($stop['name'])->afterLast(', ')->toString();
-        $isCity = $stop['type'] === 'city';
+        $state = $stop['state'] ?? str($stop['name'])->afterLast(', ')->before(' - ')->toString();
+        $isAllowedType = in_array($stop['type'], ['city', 'station'], true);
         $isInAllowedState = in_array($state, $allowedStateCodes, true);
 
-        return $isCity && $isInAllowedState;
+        return $isAllowedType && $isInAllowedState;
     }
 }

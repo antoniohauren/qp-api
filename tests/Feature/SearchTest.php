@@ -63,6 +63,58 @@ test('it searches trips between two available stops', function () {
         && $request->hasHeader('Authorization', 'Basic '.base64_encode('user:secret')));
 });
 
+test('it searches trips with allowed stations at either end', function (string $fromType, string $toType, string $fromState, string $toState) {
+    $from = $fromType === 'station' ? 'ROD_1' : 'CIT_1';
+    $to = $toType === 'station' ? 'ROD_2' : 'CIT_2';
+    $searchUrl = "https://queropassagem.example/ws_v4/new/search/{$from}/{$to}/2026-09-15/DDE";
+
+    Http::fake([
+        "https://queropassagem.example/ws_v4/stops/{$from}" => Http::response([
+            'id' => $from, 'name' => 'Origem', 'state' => $fromState, 'type' => $fromType,
+        ]),
+        "https://queropassagem.example/ws_v4/stops/{$to}" => Http::response([
+            'id' => $to, 'name' => 'Destino', 'state' => $toState, 'type' => $toType,
+        ]),
+        $searchUrl => Http::response([]),
+    ]);
+
+    getJson("/api/search/{$from}/{$to}/2026-09-15")
+        ->assertOk()
+        ->assertExactJson([]);
+
+    Http::assertSent(fn (Request $request): bool => $request->url() === $searchUrl);
+})->with([
+    'SP station origin' => ['station', 'city', 'SP', 'PR'],
+    'PR station origin' => ['station', 'city', 'PR', 'SP'],
+    'SP station destination' => ['city', 'station', 'PR', 'SP'],
+    'PR station destination' => ['city', 'station', 'SP', 'PR'],
+    'stations SP to PR' => ['station', 'station', 'SP', 'PR'],
+    'stations PR to SP' => ['station', 'station', 'PR', 'SP'],
+]);
+
+test('it blocks stations outside allowed states before searching', function (string $fromState, string $toState) {
+    Http::fake([
+        'https://queropassagem.example/ws_v4/stops/ROD_1' => Http::response([
+            'id' => 'ROD_1', 'name' => 'Origem', 'state' => $fromState, 'type' => 'station',
+        ]),
+        'https://queropassagem.example/ws_v4/stops/ROD_2' => Http::response([
+            'id' => 'ROD_2', 'name' => 'Destino', 'state' => $toState, 'type' => 'station',
+        ]),
+    ]);
+
+    getJson('/api/search/ROD_1/ROD_2/2026-09-15')
+        ->assertStatus(422)
+        ->assertExactJson([
+            'errors' => ['One or both selected stops are not available.'],
+        ]);
+
+    Http::assertSentCount(2);
+    Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/new/search/'));
+})->with([
+    'blocked origin' => ['RJ', 'PR'],
+    'blocked destination' => ['SP', 'RJ'],
+]);
+
 test('it rejects identical origin and destination stops', function () {
     getJson('/api/search/CIT_1/CIT_1/2026-09-15')
         ->assertStatus(422)

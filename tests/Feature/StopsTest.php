@@ -7,6 +7,37 @@ use Illuminate\Support\Facades\Http;
 
 use function Pest\Laravel\getJson;
 
+test('it classifies official stop names consistently in listing and detail', function (array $stop, bool $available) {
+    config()->set('services.quero_passagem.url', 'https://queropassagem.example');
+
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://queropassagem.example/ws_v4/stops' => Http::response([$stop]),
+        'https://queropassagem.example/ws_v4/stops/STOP_1' => Http::response($stop),
+    ]);
+
+    getJson('/api/stops')
+        ->assertOk()
+        ->assertExactJson([[...$stop, 'available' => $available]]);
+
+    getJson('/api/stops/STOP_1')
+        ->assertOk()
+        ->assertExactJson([...$stop, 'available' => $available]);
+})->with([
+    'SP city with suffix' => [['name' => 'São Paulo, SP - TODOS', 'type' => 'city'], true],
+    'PR city with suffix' => [['name' => 'Curitiba, PR - TODOS', 'type' => 'city'], true],
+    'RJ city with suffix' => [['name' => 'Rio de Janeiro, RJ - TODOS', 'type' => 'city'], false],
+    'SP station with suffix' => [['name' => 'São Paulo, SP - Barra Funda', 'type' => 'station'], true],
+    'PR station with suffix' => [['name' => 'Curitiba, PR - Rodoviária', 'type' => 'station'], true],
+    'RJ station with suffix' => [['name' => 'Rio de Janeiro, RJ - Novo Rio', 'type' => 'station'], false],
+    'SP station without suffix' => [['name' => 'São Paulo, SP', 'type' => 'station'], true],
+    'PR station without suffix' => [['name' => 'Curitiba, PR', 'type' => 'station'], true],
+    'explicit allowed state takes precedence' => [['name' => 'Terminal, RJ - Rodoviária', 'state' => 'SP', 'type' => 'station'], true],
+    'explicit blocked state takes precedence' => [['name' => 'Terminal, SP - Rodoviária', 'state' => 'RJ', 'type' => 'station'], false],
+    'unknown type' => [['name' => 'São Paulo, SP - TODOS', 'type' => 'unknown'], false],
+    'missing state in name' => [['name' => 'São Paulo', 'type' => 'city'], false],
+]);
+
 test('it returns stops marked available for cities in Sao Paulo and Parana', function () {
     config()->set([
         'services.quero_passagem.url' => 'https://queropassagem.example',
