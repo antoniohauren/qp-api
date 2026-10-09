@@ -19,7 +19,7 @@ class SearchController extends Controller
         try {
             $fromStop = $stops->show($from);
         } catch (RequestException $exception) {
-            if (! $exception->response->clientError()) {
+            if (! $exception->response->notFound()) {
                 throw $exception;
             }
 
@@ -31,7 +31,7 @@ class SearchController extends Controller
         try {
             $toStop = $stops->show($to);
         } catch (RequestException $exception) {
-            if (! $exception->response->clientError()) {
+            if (! $exception->response->notFound()) {
                 throw $exception;
             }
 

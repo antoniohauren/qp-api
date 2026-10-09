@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use Illuminate\Http\Client\Request;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 use function Pest\Laravel\getJson;
 
@@ -190,3 +192,30 @@ test('it preserves search provider errors and status', function () {
             'errors' => ["Parameter 'travelDate' is missing or invalid."],
         ]);
 });
+
+test('it returns integration errors instead of invalid parameters when stop lookup fails', function (string $stopId, int $providerStatus, int $publicStatus) {
+    $log = Log::spy();
+    Http::fake([
+        "https://queropassagem.example/ws_v4/stops/{$stopId}" => Http::response(['errors' => ['private provider details']], $providerStatus),
+        'https://queropassagem.example/ws_v4/stops/*' => Http::response([
+            'name' => 'Campinas', 'state' => 'SP', 'type' => 'city',
+        ]),
+    ]);
+
+    getJson('/api/search/CIT_1/CIT_2/2026-09-15')
+        ->assertStatus($publicStatus)
+        ->assertExactJson(['errors' => ['The travel provider is currently unavailable.']]);
+
+    Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/new/search/'));
+    $log->shouldHaveReceived('warning')->once()->with('Travel provider request failed.', [
+        'exception' => RequestException::class,
+        'status' => $providerStatus,
+        'route' => 'search',
+    ]);
+    $log->shouldNotHaveReceived('error');
+})->with(['origin' => 'CIT_1', 'destination' => 'CIT_2'])->with([
+    'unauthorized' => [401, 502],
+    'forbidden' => [403, 502],
+    'rate limited' => [429, 503],
+    'server error' => [500, 502],
+]);

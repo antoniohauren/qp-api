@@ -2,10 +2,13 @@
 
 namespace Tests\Feature;
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 use function Pest\Laravel\getJson;
+use function Pest\Laravel\postJson;
 
 test('it classifies official stop names consistently in listing and detail', function (array $stop, bool $available) {
     config()->set('services.quero_passagem.url', 'https://queropassagem.example');
@@ -155,3 +158,78 @@ test('it returns one stop marked available when it is in Parana', function () {
         && $request->hasHeader('Accept', 'application/json')
         && $request->hasHeader('Authorization', 'Basic '.base64_encode('user:secret')));
 });
+
+test('it returns 404 for a missing stop detail', function () {
+    config()->set('services.quero_passagem.url', 'https://queropassagem.example');
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://queropassagem.example/ws_v4/stops/INVALID' => Http::response(['errors' => ['private provider details']], 404),
+    ]);
+
+    getJson('/api/stops/INVALID')
+        ->assertNotFound()
+        ->assertExactJson(['errors' => ['Stop not found.']]);
+});
+
+test('it returns controlled errors for stop provider failures', function (string $path, int $providerStatus, int $publicStatus) {
+    config()->set('services.quero_passagem.url', 'https://queropassagem.example');
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://queropassagem.example/ws_v4/'.$path => Http::response(['errors' => ['private provider details']], $providerStatus),
+    ]);
+
+    getJson('/api/'.$path)
+        ->assertStatus($publicStatus)
+        ->assertExactJson(['errors' => ['The travel provider is currently unavailable.']]);
+})->with(['listing' => 'stops', 'detail' => 'stops/CIT_1'])->with([
+    'unauthorized' => [401, 502],
+    'forbidden' => [403, 502],
+    'rate limited' => [429, 503],
+    'server error' => [500, 502],
+    'unavailable' => [503, 502],
+]);
+
+test('it treats a missing provider catalog as 502 rather than a missing stop', function () {
+    config()->set('services.quero_passagem.url', 'https://queropassagem.example');
+    Http::preventStrayRequests();
+    Http::fake(['https://queropassagem.example/ws_v4/stops' => Http::response([], 404)]);
+
+    getJson('/api/stops')
+        ->assertStatus(502)
+        ->assertExactJson(['errors' => ['The travel provider is currently unavailable.']]);
+});
+
+test('it returns 503 with safe diagnostics when a provider connection fails', function (string $route, string $providerPath, string $routeName, string $reason) {
+    config()->set('services.quero_passagem.url', 'https://queropassagem.example');
+    $log = Log::spy();
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://queropassagem.example/ws_v4/'.$providerPath => Http::failedConnection($reason),
+        'https://queropassagem.example/ws_v4/stops/*' => Http::response([
+            'name' => 'Campinas', 'state' => 'SP', 'type' => 'city',
+        ]),
+    ]);
+
+    $response = $routeName === 'seats'
+        ? postJson($route, ['travelId' => 'trip-1'])
+        : getJson($route);
+
+    $response->assertServiceUnavailable()
+        ->assertExactJson(['errors' => ['The travel provider is currently unavailable.']]);
+
+    $log->shouldHaveReceived('warning')->once()->with('Travel provider connection failed.', [
+        'exception' => ConnectionException::class,
+        'route' => $routeName,
+    ]);
+    $log->shouldNotHaveReceived('error');
+})->with([
+    'listing' => ['/api/stops', 'stops', 'stops'],
+    'detail' => ['/api/stops/CIT_1', 'stops/CIT_1', 'stops.show'],
+    'search origin' => ['/api/search/CIT_1/CIT_2/2026-09-15', 'stops/CIT_1', 'search'],
+    'search destination' => ['/api/search/CIT_1/CIT_2/2026-09-15', 'stops/CIT_2', 'search'],
+    'search trips' => ['/api/search/CIT_1/CIT_2/2026-09-15', 'new/search/*', 'search'],
+    'seats' => ['/api/seats', 'new/seats', 'seats'],
+])->with([
+    'connection refused' => 'cURL error 7: private connection details',
+    'timeout' => 'cURL error 28: private timeout details',
+]);
