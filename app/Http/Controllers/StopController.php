@@ -29,11 +29,37 @@ class StopController extends Controller
     }
 
     /**
-     * @param  array{name: string, type: string}  $stop
+     * @return array<string, mixed>
+     */
+    public function show(string $stopId): array
+    {
+        $stop = Http::acceptJson()
+            ->withBasicAuth(
+                (string) config('services.quero_passagem.username'),
+                (string) config('services.quero_passagem.password'),
+            )
+            ->connectTimeout(3)
+            ->timeout(10)
+            ->get((string) config('services.quero_passagem.url').'/ws_v4/stops/'.$stopId)
+            ->throw()
+            ->json();
+
+        return [
+            ...$stop,
+            'available' => $this->isAvailable($stop),
+        ];
+    }
+
+    /**
+     * @param  array{name: string, state?: string, type: string}  $stop
      */
     private function isAvailable(array $stop): bool
     {
-        return $stop['type'] === 'city'
-            && (str_ends_with($stop['name'], ', SP') || str_ends_with($stop['name'], ', PR'));
+        $allowedStateCodes = ['SP', 'PR'];
+        $state = $stop['state'] ?? str($stop['name'])->afterLast(', ')->toString();
+        $isCity = $stop['type'] === 'city';
+        $isInAllowedState = in_array($state, $allowedStateCodes, true);
+
+        return $isCity && $isInAllowedState;
     }
 }

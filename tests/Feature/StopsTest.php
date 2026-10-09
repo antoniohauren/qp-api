@@ -82,3 +82,45 @@ test('it returns stops marked available for cities in Sao Paulo and Parana', fun
         && $request->hasHeader('Accept', 'application/json')
         && $request->hasHeader('Authorization', 'Basic '.base64_encode('user:secret')));
 });
+
+test('it returns one stop marked available when it is in Parana', function () {
+    config()->set([
+        'services.quero_passagem.url' => 'https://queropassagem.example',
+        'services.quero_passagem.username' => 'user',
+        'services.quero_passagem.password' => 'secret',
+    ]);
+
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://queropassagem.example/ws_v4/stops/CIT_2325' => Http::response([
+            'id' => 'CIT_2325',
+            'displayName' => 'Curitiba, PR',
+            'name' => 'Curitiba',
+            'state' => 'PR',
+            'url' => 'curitiba-pr',
+            'latitude' => '0.00000000',
+            'longitude' => '0.00000000',
+            'type' => 'city',
+            'station' => [],
+        ]),
+    ]);
+
+    $response = getJson('/api/stops/CIT_2325');
+
+    $response->assertOk()->assertExactJson([
+        'id' => 'CIT_2325',
+        'displayName' => 'Curitiba, PR',
+        'name' => 'Curitiba',
+        'state' => 'PR',
+        'url' => 'curitiba-pr',
+        'latitude' => '0.00000000',
+        'longitude' => '0.00000000',
+        'type' => 'city',
+        'station' => [],
+        'available' => true,
+    ]);
+
+    Http::assertSent(fn (Request $request): bool => $request->url() === 'https://queropassagem.example/ws_v4/stops/CIT_2325'
+        && $request->hasHeader('Accept', 'application/json')
+        && $request->hasHeader('Authorization', 'Basic '.base64_encode('user:secret')));
+});
