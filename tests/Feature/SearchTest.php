@@ -70,7 +70,7 @@ test('it searches trips between two available stops', function () {
         && $request->hasHeader('Authorization', 'Basic '.base64_encode('user:secret')));
 });
 
-test('it searches trips with allowed stations at either end', function (string $fromType, string $toType, string $fromState, string $toState) {
+test('it searches trips with allowed cities and stations at either end', function (string $fromType, string $toType, string $fromState, string $toState) {
     $from = $fromType === 'station' ? 'ROD_1' : 'CIT_1';
     $to = $toType === 'station' ? 'ROD_2' : 'CIT_2';
     $searchUrl = "https://queropassagem.example/ws_v4/new/search/{$from}/{$to}/2026-09-15/DDE";
@@ -97,6 +97,30 @@ test('it searches trips with allowed stations at either end', function (string $
     'PR station destination' => ['city', 'station', 'SP', 'PR'],
     'stations SP to PR' => ['station', 'station', 'SP', 'PR'],
     'stations PR to SP' => ['station', 'station', 'PR', 'SP'],
+    'cities PR to SP' => ['city', 'city', 'PR', 'SP'],
+    'cities within SP' => ['city', 'city', 'SP', 'SP'],
+    'cities within PR' => ['city', 'city', 'PR', 'PR'],
+]);
+
+test('it returns 422 without searching for a forbidden city or unsupported stop type', function (string $stopId, string $field, string $state, string $type) {
+    Http::fake([
+        "https://queropassagem.example/ws_v4/stops/{$stopId}" => Http::response([
+            'name' => 'Localidade', 'state' => $state, 'type' => $type,
+        ]),
+        'https://queropassagem.example/ws_v4/stops/*' => Http::response([
+            'name' => 'Campinas', 'state' => 'SP', 'type' => 'city',
+        ]),
+    ]);
+
+    getJson('/api/search/CIT_1/CIT_2/2026-09-15')
+        ->assertUnprocessable()
+        ->assertOnlyInvalid([$field => 'The selected stop is not available.']);
+
+    Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/new/search/'));
+})->with([
+    'city outside allowed states at origin' => ['CIT_1', 'from', 'RJ', 'city'],
+    'unsupported origin type' => ['CIT_1', 'from', 'SP', 'unknown'],
+    'unsupported destination type' => ['CIT_2', 'to', 'PR', 'unknown'],
 ]);
 
 test('it blocks stations outside allowed states before searching', function (string $fromState, string $toState, array $fields) {
@@ -298,4 +322,25 @@ test('it returns integration errors instead of invalid parameters when stop look
     'forbidden' => [403, 502],
     'rate limited' => [429, 502],
     'server error' => [500, 502],
+]);
+
+test('it returns 502 when destination lookup fails after an invalid origin', function (int $originStatus) {
+    Http::fake([
+        'https://queropassagem.example/ws_v4/stops/CIT_1' => Http::response([
+            'name' => 'Rio de Janeiro', 'state' => 'RJ', 'type' => 'city',
+        ], $originStatus),
+        'https://queropassagem.example/ws_v4/stops/CIT_2' => Http::response([
+            'errors' => ['private provider details'],
+        ], 500),
+    ]);
+
+    getJson('/api/search/CIT_1/CIT_2/2026-09-15')
+        ->assertStatus(502)
+        ->assertExactJson(['errors' => ['The travel provider is currently unavailable.']]);
+
+    Http::assertSentCount(2);
+    Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/new/search/'));
+})->with([
+    'forbidden origin' => 200,
+    'missing origin' => 404,
 ]);
