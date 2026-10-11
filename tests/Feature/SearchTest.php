@@ -10,7 +10,9 @@ use Illuminate\Support\Facades\Log;
 
 use function Pest\Laravel\getJson;
 use function Pest\Laravel\json;
+use function Pest\Laravel\travel;
 use function Pest\Laravel\travelTo;
+use function Pest\Laravel\withServerVariables;
 
 beforeEach(function () {
     travelTo(now()->setDateTime(2026, 9, 14, 12, 0));
@@ -68,6 +70,69 @@ test('it searches trips between two available stops', function () {
     Http::assertSent(fn (Request $request): bool => $request->url() === 'https://queropassagem.example/ws_v4/new/search/CIT_1/CIT_2/2026-09-15/DDE'
         && $request->hasHeader('Accept', 'application/json')
         && $request->hasHeader('Authorization', 'Basic '.base64_encode('user:secret')));
+});
+
+test('it preserves reserved characters in provider stop lookup and search path segments', function () {
+    config()->set('services.quero_passagem.affiliate_code', 'DDE/#?%+');
+    $fromUrl = 'https://queropassagem.example/ws_v4/stops/CIT_1%23%3F%25%2B';
+    $toUrl = 'https://queropassagem.example/ws_v4/stops/CIT_2%3F%23%25%2B';
+    $searchUrl = 'https://queropassagem.example/ws_v4/new/search/CIT_1%23%3F%25%2B/CIT_2%3F%23%25%2B/2026-09-15/DDE%2F%23%3F%25%2B';
+    Http::fake([
+        $fromUrl => Http::response([
+            'id' => 'CIT_1#?%+', 'name' => 'Campinas', 'state' => 'SP', 'type' => 'city',
+        ]),
+        $toUrl => Http::response([
+            'id' => 'CIT_2?#%+', 'name' => 'Curitiba', 'state' => 'PR', 'type' => 'city',
+        ]),
+        $searchUrl => Http::response([]),
+    ]);
+
+    getJson('/api/search/CIT_1%23%3F%25%2B/CIT_2%3F%23%25%2B/2026-09-15')
+        ->assertOk()
+        ->assertExactJson([]);
+
+    Http::assertSentCount(3);
+    Http::assertSent(fn (Request $request): bool => $request->url() === $fromUrl);
+    Http::assertSent(fn (Request $request): bool => $request->url() === $toUrl);
+    Http::assertSent(fn (Request $request): bool => $request->url() === $searchUrl);
+});
+
+test('it returns 429 without provider calls when the shared integration quota is exhausted', function () {
+    Http::fake([
+        'https://queropassagem.example/ws_v4/stops' => Http::response([]),
+        'https://queropassagem.example/ws_v4/stops/CIT_1' => Http::response([
+            'name' => 'Campinas', 'state' => 'SP', 'type' => 'city',
+        ]),
+        'https://queropassagem.example/ws_v4/stops/CIT_2' => Http::response([
+            'name' => 'Curitiba', 'state' => 'PR', 'type' => 'city',
+        ]),
+        'https://queropassagem.example/ws_v4/new/search/CIT_1/CIT_2/2026-09-15/DDE' => Http::response([]),
+    ]);
+    withServerVariables(['REMOTE_ADDR' => '192.0.2.1']);
+
+    for ($attempt = 0; $attempt < 19; $attempt++) {
+        getJson('/api/stops')->assertOk();
+    }
+
+    getJson('/api/search/CIT_1/CIT_2/2026-09-15')->assertOk();
+    Http::assertSentCount(22);
+
+    getJson('/api/search/CIT_1/CIT_2/2026-09-15')
+        ->assertTooManyRequests()
+        ->assertHeader('Retry-After', '60');
+    getJson('/api/stops')->assertTooManyRequests();
+    getJson('/api/stops/CIT_1')->assertTooManyRequests();
+    json('POST', '/api/seats', ['travelId' => 'trip-1'])->assertTooManyRequests();
+    Http::assertSentCount(22);
+
+    withServerVariables(['REMOTE_ADDR' => '192.0.2.2']);
+    getJson('/api/search/CIT_1/CIT_2/2026-09-15')->assertOk();
+    Http::assertSentCount(25);
+
+    withServerVariables(['REMOTE_ADDR' => '192.0.2.1']);
+    travel(61)->seconds();
+    getJson('/api/search/CIT_1/CIT_2/2026-09-15')->assertOk();
+    Http::assertSentCount(28);
 });
 
 test('it searches trips with allowed cities and stations at either end', function (string $fromType, string $toType, string $fromState, string $toState) {

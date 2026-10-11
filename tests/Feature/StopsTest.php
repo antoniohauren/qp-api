@@ -160,6 +160,21 @@ test('it returns one stop marked available when it is in Parana', function () {
         && $request->hasHeader('Authorization', 'Basic '.base64_encode('user:secret')));
 });
 
+test('it preserves reserved characters in the provider stop detail path segment', function () {
+    config()->set('services.quero_passagem.url', 'https://queropassagem.example');
+    $stop = ['id' => 'CIT_1#?%+', 'name' => 'Curitiba', 'state' => 'PR', 'type' => 'city'];
+    $stopUrl = 'https://queropassagem.example/ws_v4/stops/CIT_1%23%3F%25%2B';
+
+    Http::preventStrayRequests();
+    Http::fake([$stopUrl => Http::response($stop)]);
+
+    getJson('/api/stops/CIT_1%23%3F%25%2B')
+        ->assertOk()
+        ->assertExactJson([...$stop, 'available' => true]);
+
+    Http::assertSent(fn (Request $request): bool => $request->url() === $stopUrl);
+});
+
 test('it returns 404 for a missing stop detail', function () {
     config()->set('services.quero_passagem.url', 'https://queropassagem.example');
     Http::preventStrayRequests();

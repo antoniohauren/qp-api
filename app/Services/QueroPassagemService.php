@@ -25,7 +25,7 @@ class QueroPassagemService
      */
     public function stop(string $stopId): array
     {
-        $stop = $this->client()->get('/ws_v4/stops/'.$stopId)->throw()->json();
+        $stop = $this->client()->get('/ws_v4/stops/'.rawurlencode($stopId))->throw()->json();
 
         return [
             ...$stop,
@@ -40,10 +40,10 @@ class QueroPassagemService
     {
         $trips = $this->client()->get(sprintf(
             '/ws_v4/new/search/%s/%s/%s/%s',
-            $from,
-            $to,
-            $travelDate,
-            config('services.quero_passagem.affiliate_code'),
+            rawurlencode($from),
+            rawurlencode($to),
+            rawurlencode($travelDate),
+            rawurlencode((string) config('services.quero_passagem.affiliate_code')),
         ))->throw()->json();
 
         usort($trips, fn (array $firstTrip, array $secondTrip): int => [
