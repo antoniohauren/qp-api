@@ -269,7 +269,7 @@ test('it returns controlled errors when the search provider fails', function (in
 })->with([
     'invalid parameter' => [422, 502],
     'not found' => [404, 502],
-    'rate limited' => [429, 503],
+    'rate limited' => [429, 502],
     'server error' => [500, 502],
 ]);
 
@@ -296,6 +296,6 @@ test('it returns integration errors instead of invalid parameters when stop look
 })->with(['origin' => 'CIT_1', 'destination' => 'CIT_2'])->with([
     'unauthorized' => [401, 502],
     'forbidden' => [403, 502],
-    'rate limited' => [429, 503],
+    'rate limited' => [429, 502],
     'server error' => [500, 502],
 ]);

@@ -185,7 +185,7 @@ test('it returns controlled errors for stop provider failures', function (string
 })->with(['listing' => 'stops', 'detail' => 'stops/CIT_1'])->with([
     'unauthorized' => [401, 502],
     'forbidden' => [403, 502],
-    'rate limited' => [429, 503],
+    'rate limited' => [429, 502],
     'server error' => [500, 502],
     'unavailable' => [503, 502],
 ]);
@@ -200,7 +200,7 @@ test('it treats a missing provider catalog as 502 rather than a missing stop', f
         ->assertExactJson(['errors' => ['The travel provider is currently unavailable.']]);
 });
 
-test('it returns 503 with safe diagnostics when a provider connection fails', function (string $route, string $providerPath, string $routeName, string $reason) {
+test('it returns 502 with safe diagnostics when a provider connection fails', function (string $route, string $providerPath, string $routeName, string $reason) {
     travelTo(now()->setDateTime(2026, 9, 14, 12, 0));
 
     config()->set('services.quero_passagem.url', 'https://queropassagem.example');
@@ -217,7 +217,7 @@ test('it returns 503 with safe diagnostics when a provider connection fails', fu
         ? postJson($route, ['travelId' => 'trip-1'])
         : getJson($route);
 
-    $response->assertServiceUnavailable()
+    $response->assertStatus(502)
         ->assertExactJson(['errors' => ['The travel provider is currently unavailable.']]);
 
     $log->shouldHaveReceived('warning')->once()->with('Travel provider connection failed.', [

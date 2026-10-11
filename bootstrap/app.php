@@ -46,11 +46,11 @@ return Application::configure(basePath: dirname(__DIR__))
 
             return response()->json(
                 ['errors' => ['The travel provider is currently unavailable.']],
-                $exception->response->status() === 429 ? 503 : 502,
+                502,
             );
         });
 
         $exceptions->render(function (ConnectionException $exception): JsonResponse {
-            return response()->json(['errors' => ['The travel provider is currently unavailable.']], 503);
+            return response()->json(['errors' => ['The travel provider is currently unavailable.']], 502);
         });
     })->create();

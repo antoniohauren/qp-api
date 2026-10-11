@@ -69,7 +69,7 @@ test('it returns controlled errors when the seat provider fails', function (int 
 })->with([
     'invalid parameter' => [422, 502],
     'not found' => [404, 502],
-    'rate limited' => [429, 503],
+    'rate limited' => [429, 502],
     'server error' => [500, 502],
 ]);
 
