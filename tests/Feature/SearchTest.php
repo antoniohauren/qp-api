@@ -4,12 +4,15 @@ namespace Tests\Feature;
 
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 use function Pest\Laravel\getJson;
 
 beforeEach(function () {
+    $this->travelTo(now()->setDateTime(2026, 9, 14, 12, 0));
+
     config()->set([
         'services.quero_passagem.url' => 'https://queropassagem.example',
         'services.quero_passagem.username' => 'user',
@@ -94,7 +97,7 @@ test('it searches trips with allowed stations at either end', function (string $
     'stations PR to SP' => ['station', 'station', 'PR', 'SP'],
 ]);
 
-test('it blocks stations outside allowed states before searching', function (string $fromState, string $toState) {
+test('it blocks stations outside allowed states before searching', function (string $fromState, string $toState, array $fields) {
     Http::fake([
         'https://queropassagem.example/ws_v4/stops/ROD_1' => Http::response([
             'id' => 'ROD_1', 'name' => 'Origem', 'state' => $fromState, 'type' => 'station',
@@ -105,27 +108,99 @@ test('it blocks stations outside allowed states before searching', function (str
     ]);
 
     getJson('/api/search/ROD_1/ROD_2/2026-09-15')
-        ->assertStatus(422)
-        ->assertExactJson([
-            'errors' => ['One or both selected stops are not available.'],
-        ]);
+        ->assertUnprocessable()
+        ->assertOnlyInvalid($fields);
 
     Http::assertSentCount(2);
     Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/new/search/'));
 })->with([
-    'blocked origin' => ['RJ', 'PR'],
-    'blocked destination' => ['SP', 'RJ'],
+    'blocked origin' => ['RJ', 'PR', ['from' => 'The selected stop is not available.']],
+    'blocked destination' => ['SP', 'RJ', ['to' => 'The selected stop is not available.']],
+    'both blocked' => ['RJ', 'RJ', ['from' => 'The selected stop is not available.', 'to' => 'The selected stop is not available.']],
 ]);
 
 test('it rejects identical origin and destination stops', function () {
     getJson('/api/search/CIT_1/CIT_1/2026-09-15')
-        ->assertStatus(422)
-        ->assertExactJson([
-            'errors' => ["Parameters 'from' and 'to' must be different."],
-        ]);
+        ->assertUnprocessable()
+        ->assertOnlyInvalid(['from' => 'The from field and to must be different.']);
 
     Http::assertNothingSent();
 });
+
+test('it returns 422 for invalid travel dates without contacting the provider', function (string $date, string $message) {
+    getJson("/api/search/CIT_1/CIT_2/{$date}")
+        ->assertUnprocessable()
+        ->assertOnlyInvalid(['travelDate' => $message]);
+
+    Http::assertNothingSent();
+})->with([
+    'malformed' => ['not-a-date', 'The travel date field must match the format Y-m-d.'],
+    'impossible date' => ['2026-02-30', 'The travel date field must match the format Y-m-d.'],
+    'wrong format' => ['2026-9-15', 'The travel date field must match the format Y-m-d.'],
+    'yesterday' => ['2026-09-13', 'The travel date field must be a date after or equal to today.'],
+]);
+
+test('it accepts today in the application timezone', function () {
+    $originalTimezone = date_default_timezone_get();
+    config()->set('app.timezone', 'America/Sao_Paulo');
+    date_default_timezone_set(config('app.timezone'));
+    $this->travelTo(Carbon::parse('2026-09-15 01:00:00', 'UTC'));
+    $searchUrl = 'https://queropassagem.example/ws_v4/new/search/CIT_1/CIT_2/2026-09-14/DDE';
+    Http::fake([
+        'https://queropassagem.example/ws_v4/stops/*' => Http::response([
+            'name' => 'Campinas', 'state' => 'SP', 'type' => 'city',
+        ]),
+        $searchUrl => Http::response([]),
+    ]);
+
+    try {
+        getJson('/api/search/CIT_1/CIT_2/2026-09-14')
+            ->assertOk()
+            ->assertExactJson([]);
+
+        Http::assertSent(fn (Request $request): bool => $request->url() === $searchUrl);
+    } finally {
+        date_default_timezone_set($originalTimezone);
+    }
+});
+
+test('it uses route values over query and body values for validation and search', function (array $body, string $query) {
+    $searchUrl = 'https://queropassagem.example/ws_v4/new/search/CIT_1/CIT_2/2026-09-15/DDE';
+    Http::fake([
+        'https://queropassagem.example/ws_v4/stops/CIT_1' => Http::response([
+            'name' => 'Campinas', 'state' => 'SP', 'type' => 'city',
+        ]),
+        'https://queropassagem.example/ws_v4/stops/CIT_2' => Http::response([
+            'name' => 'Curitiba', 'state' => 'PR', 'type' => 'city',
+        ]),
+        $searchUrl => Http::response([]),
+    ]);
+
+    $this->json('GET', '/api/search/CIT_1/CIT_2/2026-09-15'.$query, $body)
+        ->assertOk()
+        ->assertExactJson([]);
+
+    Http::assertSentCount(3);
+    Http::assertSent(fn (Request $request): bool => $request->url() === $searchUrl);
+})->with([
+    'query' => [[], '?from=INVALID&to=INVALID&travelDate=not-a-date'],
+    'body' => [['from' => 'INVALID', 'to' => 'INVALID', 'travelDate' => 'not-a-date'], ''],
+    'query and body' => [['from' => 'BODY', 'to' => 'BODY', 'travelDate' => '2020-01-01'], '?from=QUERY&to=QUERY&travelDate=not-a-date'],
+]);
+
+test('it returns 422 when valid query and body values try to mask invalid route values', function (string $path, string $field) {
+    $this->json('GET', $path.'?from=CIT_1&to=CIT_2&travelDate=2026-09-15', [
+        'from' => 'CIT_1', 'to' => 'CIT_2', 'travelDate' => '2026-09-15',
+    ])
+        ->assertUnprocessable()
+        ->assertOnlyInvalid([$field]);
+
+    Http::assertNothingSent();
+})->with([
+    'identical stops' => ['/api/search/CIT_1/CIT_1/2026-09-15', 'from'],
+    'malformed date' => ['/api/search/CIT_1/CIT_2/not-a-date', 'travelDate'],
+    'past date' => ['/api/search/CIT_1/CIT_2/2026-09-13', 'travelDate'],
+]);
 
 test('it rejects unavailable stops', function () {
     Http::fake([
@@ -144,10 +219,8 @@ test('it rejects unavailable stops', function () {
     ]);
 
     getJson('/api/search/CIT_1/CIT_2/2026-09-15')
-        ->assertStatus(422)
-        ->assertExactJson([
-            'errors' => ['One or both selected stops are not available.'],
-        ]);
+        ->assertUnprocessable()
+        ->assertOnlyInvalid(['to' => 'The selected stop is not available.']);
 
     Http::assertSentCount(2);
 });
@@ -164,10 +237,10 @@ test('it returns invalid stop errors from get one checks', function (string $sto
     ]);
 
     getJson("/api/search/{$stop}/".($stop === 'INVALID' ? 'CIT_1' : 'INVALID').'/2026-09-15')
-        ->assertStatus(422)
-        ->assertExactJson([
-            'errors' => ["Parameter '{$parameter}' is missing or invalid."],
-        ]);
+        ->assertUnprocessable()
+        ->assertOnlyInvalid([$parameter => "Parameter '{$parameter}' is missing or invalid."]);
+
+    Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/new/search/'));
 })->with([
     'from' => ['INVALID', 'from'],
     'to' => ['CIT_1', 'to'],
@@ -186,7 +259,7 @@ test('it returns controlled errors when the search provider fails', function (in
         ], $providerStatus),
     ]);
 
-    getJson('/api/search/CIT_1/CIT_2/not-a-date')
+    getJson('/api/search/CIT_1/CIT_2/2026-09-15')
         ->assertStatus($publicStatus)
         ->assertExactJson([
             'errors' => ['The travel provider is currently unavailable.'],

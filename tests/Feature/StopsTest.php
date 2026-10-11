@@ -200,6 +200,8 @@ test('it treats a missing provider catalog as 502 rather than a missing stop', f
 });
 
 test('it returns 503 with safe diagnostics when a provider connection fails', function (string $route, string $providerPath, string $routeName, string $reason) {
+    $this->travelTo(now()->setDateTime(2026, 9, 14, 12, 0));
+
     config()->set('services.quero_passagem.url', 'https://queropassagem.example');
     $log = Log::spy();
     Http::preventStrayRequests();
