@@ -9,9 +9,11 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 use function Pest\Laravel\getJson;
+use function Pest\Laravel\json;
+use function Pest\Laravel\travelTo;
 
 beforeEach(function () {
-    $this->travelTo(now()->setDateTime(2026, 9, 14, 12, 0));
+    travelTo(now()->setDateTime(2026, 9, 14, 12, 0));
 
     config()->set([
         'services.quero_passagem.url' => 'https://queropassagem.example',
@@ -144,7 +146,7 @@ test('it accepts today in the application timezone', function () {
     $originalTimezone = date_default_timezone_get();
     config()->set('app.timezone', 'America/Sao_Paulo');
     date_default_timezone_set(config('app.timezone'));
-    $this->travelTo(Carbon::parse('2026-09-15 01:00:00', 'UTC'));
+    travelTo(Carbon::parse('2026-09-15 01:00:00', 'UTC'));
     $searchUrl = 'https://queropassagem.example/ws_v4/new/search/CIT_1/CIT_2/2026-09-14/DDE';
     Http::fake([
         'https://queropassagem.example/ws_v4/stops/*' => Http::response([
@@ -176,7 +178,7 @@ test('it uses route values over query and body values for validation and search'
         $searchUrl => Http::response([]),
     ]);
 
-    $this->json('GET', '/api/search/CIT_1/CIT_2/2026-09-15'.$query, $body)
+    json('GET', '/api/search/CIT_1/CIT_2/2026-09-15'.$query, $body)
         ->assertOk()
         ->assertExactJson([]);
 
@@ -189,7 +191,7 @@ test('it uses route values over query and body values for validation and search'
 ]);
 
 test('it returns 422 when valid query and body values try to mask invalid route values', function (string $path, string $field) {
-    $this->json('GET', $path.'?from=CIT_1&to=CIT_2&travelDate=2026-09-15', [
+    json('GET', $path.'?from=CIT_1&to=CIT_2&travelDate=2026-09-15', [
         'from' => 'CIT_1', 'to' => 'CIT_2', 'travelDate' => '2026-09-15',
     ])
         ->assertUnprocessable()
