@@ -84,3 +84,32 @@ test('it rejects a missing travel ID with 422', function () {
 
     Http::assertNothingSent();
 });
+
+test('it rejects an invalid travel ID with 422', function (mixed $travelId, string $message) {
+    Http::preventStrayRequests();
+
+    postJson('/api/seats', ['travelId' => $travelId])
+        ->assertUnprocessable()
+        ->assertInvalid(['travelId' => $message]);
+
+    Http::assertNothingSent();
+})->with([
+    'empty' => ['', 'The travel id field is required.'],
+    'integer' => [123, 'The travel id field must be a string.'],
+    'array' => [['123'], 'The travel id field must be a string.'],
+    'too long' => [str_repeat('a', 256), 'The travel id field must not be greater than 255 characters.'],
+]);
+
+test('it accepts a travel ID of 255 characters', function () {
+    $travelId = str_repeat('a', 255);
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://queropassagem.example/ws_v4/new/seats' => Http::response([]),
+    ]);
+
+    postJson('/api/seats', ['travelId' => $travelId])
+        ->assertOk()
+        ->assertExactJson([]);
+
+    Http::assertSent(fn (Request $request): bool => $request['travelId'] === $travelId);
+});
