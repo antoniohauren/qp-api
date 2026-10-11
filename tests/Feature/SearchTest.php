@@ -173,7 +173,7 @@ test('it returns invalid stop errors from get one checks', function (string $sto
     'to' => ['CIT_1', 'to'],
 ]);
 
-test('it preserves search provider errors and status', function () {
+test('it returns controlled errors when the search provider fails', function (int $providerStatus, int $publicStatus) {
     Http::fake([
         'https://queropassagem.example/ws_v4/stops/*' => Http::response([
             'id' => 'CIT_1',
@@ -183,15 +183,20 @@ test('it preserves search provider errors and status', function () {
         ]),
         'https://queropassagem.example/ws_v4/new/search/*' => Http::response([
             'errors' => ["Parameter 'travelDate' is missing or invalid."],
-        ], 422),
+        ], $providerStatus),
     ]);
 
     getJson('/api/search/CIT_1/CIT_2/not-a-date')
-        ->assertStatus(422)
+        ->assertStatus($publicStatus)
         ->assertExactJson([
-            'errors' => ["Parameter 'travelDate' is missing or invalid."],
+            'errors' => ['The travel provider is currently unavailable.'],
         ]);
-});
+})->with([
+    'invalid parameter' => [422, 502],
+    'not found' => [404, 502],
+    'rate limited' => [429, 503],
+    'server error' => [500, 502],
+]);
 
 test('it returns integration errors instead of invalid parameters when stop lookup fails', function (string $stopId, int $providerStatus, int $publicStatus) {
     $log = Log::spy();

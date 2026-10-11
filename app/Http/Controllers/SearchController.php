@@ -2,13 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\QueroPassagemService;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Http;
 
 class SearchController extends Controller
 {
-    public function __invoke(StopController $stops, string $from, string $to, string $travelDate): JsonResponse
+    public function __invoke(QueroPassagemService $queroPassagem, string $from, string $to, string $travelDate): JsonResponse
     {
         if ($from === $to) {
             return response()->json([
@@ -17,7 +17,7 @@ class SearchController extends Controller
         }
 
         try {
-            $fromStop = $stops->show($from);
+            $fromStop = $queroPassagem->stop($from);
         } catch (RequestException $exception) {
             if (! $exception->response->notFound()) {
                 throw $exception;
@@ -29,7 +29,7 @@ class SearchController extends Controller
         }
 
         try {
-            $toStop = $stops->show($to);
+            $toStop = $queroPassagem->stop($to);
         } catch (RequestException $exception) {
             if (! $exception->response->notFound()) {
                 throw $exception;
@@ -46,34 +46,6 @@ class SearchController extends Controller
             ], 422);
         }
 
-        $response = Http::acceptJson()
-            ->withBasicAuth(
-                (string) config('services.quero_passagem.username'),
-                (string) config('services.quero_passagem.password'),
-            )
-            ->connectTimeout(3)
-            ->timeout(10)
-            ->get(sprintf(
-                '%s/ws_v4/new/search/%s/%s/%s/%s',
-                config('services.quero_passagem.url'),
-                $from,
-                $to,
-                $travelDate,
-                config('services.quero_passagem.affiliate_code'),
-            ));
-
-        $trips = $response->json();
-
-        if ($response->successful()) {
-            usort($trips, fn (array $firstTrip, array $secondTrip): int => [
-                $firstTrip['departure']['date'],
-                $firstTrip['departure']['time'],
-            ] <=> [
-                $secondTrip['departure']['date'],
-                $secondTrip['departure']['time'],
-            ]);
-        }
-
-        return response()->json($trips, $response->status());
+        return response()->json($queroPassagem->search($from, $to, $travelDate));
     }
 }

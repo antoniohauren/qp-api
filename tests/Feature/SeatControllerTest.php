@@ -32,7 +32,11 @@ test('it returns seats for a travel ID', function () {
         'https://queropassagem.example/ws_v4/new/seats' => Http::response($seats),
     ]);
 
-    postJson('/api/seats', ['travelId' => '1_c1e3517874534111585cb00901c25e8e'])
+    postJson('/api/seats', [
+        'travelId' => '1_c1e3517874534111585cb00901c25e8e',
+        'orientation' => 'vertical',
+        'type' => 'list',
+    ])
         ->assertOk()
         ->assertExactJson($seats);
 
@@ -47,22 +51,27 @@ test('it returns seats for a travel ID', function () {
         ]);
 });
 
-test('it preserves seat provider errors and status', function () {
+test('it returns controlled errors when the seat provider fails', function (int $providerStatus, int $publicStatus) {
     Http::preventStrayRequests();
     Http::fake([
         'https://queropassagem.example/ws_v4/new/seats' => Http::response([
             'errors' => ["Parameter 'travelId' is missing or invalid."],
-        ], 422),
+        ], $providerStatus),
     ]);
 
     postJson('/api/seats', ['travelId' => 'invalid'])
-        ->assertUnprocessable()
+        ->assertStatus($publicStatus)
         ->assertExactJson([
-            'errors' => ["Parameter 'travelId' is missing or invalid."],
+            'errors' => ['The travel provider is currently unavailable.'],
         ]);
 
     Http::assertSentCount(1);
-});
+})->with([
+    'invalid parameter' => [422, 502],
+    'not found' => [404, 502],
+    'rate limited' => [429, 503],
+    'server error' => [500, 502],
+]);
 
 test('it rejects a missing travel ID with 422', function () {
     Http::preventStrayRequests();
