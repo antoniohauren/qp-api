@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Services\QueroPassagemService;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -11,7 +13,7 @@ use function Pest\Laravel\getJson;
 use function Pest\Laravel\postJson;
 use function Pest\Laravel\travelTo;
 
-test('it classifies official stop names consistently in listing and detail', function (array $stop, bool $available) {
+test('it classifies official stop names consistently in listing and internal lookup', function (array $stop, bool $available) {
     config()->set('services.quero_passagem.url', 'https://queropassagem.example');
 
     Http::preventStrayRequests();
@@ -24,9 +26,8 @@ test('it classifies official stop names consistently in listing and detail', fun
         ->assertOk()
         ->assertExactJson([[...$stop, 'available' => $available]]);
 
-    getJson('/api/stops/STOP_1')
-        ->assertOk()
-        ->assertExactJson([...$stop, 'available' => $available]);
+    expect(app(QueroPassagemService::class)->stop('STOP_1'))
+        ->toBe([...$stop, 'available' => $available]);
 })->with([
     'SP city with suffix' => [['name' => 'São Paulo, SP - TODOS', 'type' => 'city'], true],
     'PR city with suffix' => [['name' => 'Curitiba, PR - TODOS', 'type' => 'city'], true],
@@ -118,7 +119,7 @@ test('it returns stops marked available for cities in Sao Paulo and Parana', fun
         && $request->hasHeader('Authorization', 'Basic '.base64_encode('user:secret')));
 });
 
-test('it returns one stop marked available when it is in Parana', function () {
+test('it internally retrieves one stop marked available when it is in Parana', function () {
     config()->set([
         'services.quero_passagem.url' => 'https://queropassagem.example',
         'services.quero_passagem.username' => 'user',
@@ -140,9 +141,9 @@ test('it returns one stop marked available when it is in Parana', function () {
         ]),
     ]);
 
-    $response = getJson('/api/stops/CIT_2325');
+    $stop = app(QueroPassagemService::class)->stop('CIT_2325');
 
-    $response->assertOk()->assertExactJson([
+    expect($stop)->toBe([
         'id' => 'CIT_2325',
         'displayName' => 'Curitiba, PR',
         'name' => 'Curitiba',
@@ -168,42 +169,65 @@ test('it preserves reserved characters in the provider stop detail path segment'
     Http::preventStrayRequests();
     Http::fake([$stopUrl => Http::response($stop)]);
 
-    getJson('/api/stops/CIT_1%23%3F%25%2B')
-        ->assertOk()
-        ->assertExactJson([...$stop, 'available' => true]);
+    expect(app(QueroPassagemService::class)->stop('CIT_1#?%+'))
+        ->toBe([...$stop, 'available' => true]);
 
     Http::assertSent(fn (Request $request): bool => $request->url() === $stopUrl);
 });
 
-test('it returns 404 for a missing stop detail', function () {
+test('it returns 404 for public stop details without contacting the provider', function () {
+    config()->set('services.quero_passagem.url', 'https://queropassagem.example');
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://queropassagem.example/ws_v4/stops/CIT_1' => Http::response([
+            'id' => 'CIT_1', 'name' => 'Campinas', 'state' => 'SP', 'type' => 'city',
+        ]),
+    ]);
+
+    getJson('/api/stops/CIT_1')->assertNotFound();
+
+    Http::assertNothingSent();
+});
+
+test('it propagates a missing stop response to internal callers', function () {
     config()->set('services.quero_passagem.url', 'https://queropassagem.example');
     Http::preventStrayRequests();
     Http::fake([
         'https://queropassagem.example/ws_v4/stops/INVALID' => Http::response(['errors' => ['private provider details']], 404),
     ]);
 
-    getJson('/api/stops/INVALID')
-        ->assertNotFound()
-        ->assertExactJson(['errors' => ['Stop not found.']]);
+    expect(fn () => app(QueroPassagemService::class)->stop('INVALID'))
+        ->toThrow(RequestException::class, '404');
 });
 
-test('it returns controlled errors for stop provider failures', function (string $path, int $providerStatus, int $publicStatus) {
+test('it returns controlled errors for stop listing provider failures', function (int $providerStatus, int $publicStatus) {
     config()->set('services.quero_passagem.url', 'https://queropassagem.example');
     Http::preventStrayRequests();
     Http::fake([
-        'https://queropassagem.example/ws_v4/'.$path => Http::response(['errors' => ['private provider details']], $providerStatus),
+        'https://queropassagem.example/ws_v4/stops' => Http::response(['errors' => ['private provider details']], $providerStatus),
     ]);
 
-    getJson('/api/'.$path)
+    getJson('/api/stops')
         ->assertStatus($publicStatus)
         ->assertExactJson(['errors' => ['The travel provider is currently unavailable.']]);
-})->with(['listing' => 'stops', 'detail' => 'stops/CIT_1'])->with([
+})->with([
     'unauthorized' => [401, 502],
     'forbidden' => [403, 502],
     'rate limited' => [429, 502],
     'server error' => [500, 502],
     'unavailable' => [503, 502],
 ]);
+
+test('it propagates provider failures to internal stop callers', function (int $providerStatus) {
+    config()->set('services.quero_passagem.url', 'https://queropassagem.example');
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://queropassagem.example/ws_v4/stops/CIT_1' => Http::response([], $providerStatus),
+    ]);
+
+    expect(fn () => app(QueroPassagemService::class)->stop('CIT_1'))
+        ->toThrow(RequestException::class, (string) $providerStatus);
+})->with([401, 403, 429, 500, 503]);
 
 test('it treats a missing provider catalog as 502 rather than a missing stop', function () {
     config()->set('services.quero_passagem.url', 'https://queropassagem.example');
@@ -242,7 +266,6 @@ test('it returns 502 with safe diagnostics when a provider connection fails', fu
     $log->shouldNotHaveReceived('error');
 })->with([
     'listing' => ['/api/stops', 'stops', 'stops'],
-    'detail' => ['/api/stops/CIT_1', 'stops/CIT_1', 'stops.show'],
     'search origin' => ['/api/search/CIT_1/CIT_2/2026-09-15', 'stops/CIT_1', 'search'],
     'search destination' => ['/api/search/CIT_1/CIT_2/2026-09-15', 'stops/CIT_2', 'search'],
     'search trips' => ['/api/search/CIT_1/CIT_2/2026-09-15', 'new/search/*', 'search'],

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 class QueroPassagemService
@@ -12,12 +13,20 @@ class QueroPassagemService
      */
     public function stops(): array
     {
-        $stops = $this->client()->get('/ws_v4/stops')->throw()->json();
+        $cacheKey = 'quero_passagem.stops.'.hash('sha256', serialize([
+            (string) config('services.quero_passagem.url'),
+            (string) config('services.quero_passagem.username'),
+            (string) config('services.quero_passagem.password'),
+        ]));
 
-        return array_map(fn (array $stop): array => [
-            ...$stop,
-            'available' => $this->isAvailable($stop),
-        ], $stops);
+        return Cache::remember($cacheKey, now()->addHour(), function (): array {
+            $stops = $this->client()->get('/ws_v4/stops')->throw()->json();
+
+            return array_map(fn (array $stop): array => [
+                ...$stop,
+                'available' => $this->isAvailable($stop),
+            ], $stops);
+        });
     }
 
     /**

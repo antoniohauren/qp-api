@@ -39,11 +39,7 @@ return Application::configure(basePath: dirname(__DIR__))
             ]);
         })->stop();
 
-        $exceptions->render(function (RequestException $exception, Request $request): JsonResponse {
-            if ($exception->response->notFound() && $request->routeIs('stops.show')) {
-                return response()->json(['errors' => ['Stop not found.']], 404);
-            }
-
+        $exceptions->render(function (RequestException $exception): JsonResponse {
             return response()->json(
                 ['errors' => ['The travel provider is currently unavailable.']],
                 502,

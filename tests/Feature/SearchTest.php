@@ -99,7 +99,7 @@ test('it preserves reserved characters in provider stop lookup and search path s
 
 test('it returns 429 without provider calls when the shared integration quota is exhausted', function () {
     Http::fake([
-        'https://queropassagem.example/ws_v4/stops' => Http::response([]),
+        'https://queropassagem.example/ws_v4/new/seats' => Http::response([]),
         'https://queropassagem.example/ws_v4/stops/CIT_1' => Http::response([
             'name' => 'Campinas', 'state' => 'SP', 'type' => 'city',
         ]),
@@ -111,7 +111,7 @@ test('it returns 429 without provider calls when the shared integration quota is
     withServerVariables(['REMOTE_ADDR' => '192.0.2.1']);
 
     for ($attempt = 0; $attempt < 19; $attempt++) {
-        getJson('/api/stops')->assertOk();
+        json('POST', '/api/seats', ['travelId' => 'trip-1'])->assertOk();
     }
 
     getJson('/api/search/CIT_1/CIT_2/2026-09-15')->assertOk();
@@ -121,7 +121,7 @@ test('it returns 429 without provider calls when the shared integration quota is
         ->assertTooManyRequests()
         ->assertHeader('Retry-After', '60');
     getJson('/api/stops')->assertTooManyRequests();
-    getJson('/api/stops/CIT_1')->assertTooManyRequests();
+    getJson('/api/stops/CIT_1')->assertNotFound();
     json('POST', '/api/seats', ['travelId' => 'trip-1'])->assertTooManyRequests();
     Http::assertSentCount(22);
 

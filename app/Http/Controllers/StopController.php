@@ -15,12 +15,4 @@ class StopController extends Controller
     {
         return $this->queroPassagem->stops();
     }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function show(string $stopId): array
-    {
-        return $this->queroPassagem->stop($stopId);
-    }
 }
